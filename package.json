@@ -1,0 +1,26 @@
+{
+  "name": "product-sync-worker",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FlowzPlatform/product-sync-worker.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/FlowzPlatform/product-sync-worker/issues"
+  },
+  "homepage": "https://github.com/FlowzPlatform/product-sync-worker#readme",
+  "dependencies": {
+    "asyncawait": "^1.0.6",
+    "axios": "^0.18.0",
+    "lodash": "^4.17.10",
+    "pino": "^4.16.1",
+    "rethinkdb-job-queue": "^3.1.7"
+  }
+}
