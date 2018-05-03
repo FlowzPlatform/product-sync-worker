@@ -27,7 +27,7 @@ let pdmUrl = 'http://api.flowzcluster.tk/pdmnew/pdm'
 let asiUrl = 'https://sandbox-productservice.asicentral.com/api/v4/'
 
 // let lookup = 'https://sandbox-productservice.asicentral.com/api/v4/lookup/categorieslist'
-let psyncUrl = serviceUrl + '/product-sync'
+let psyncUrl = serviceUrl + '/onlysync'
 
 let lookupData = {};
 
@@ -40,6 +40,9 @@ let lookup = {
 	'ShippingWeight': 'shippingweight'
 }
 
+let count = 0
+let skip = 0
+
 async function getAPI(id) {
 	let res = await axios.get(psyncUrl + '/' + id).then(resp => {
 		return resp.data
@@ -49,13 +52,14 @@ async function getAPI(id) {
 	return res;
 }
 
-async function getPDMdata(id) {
-	let res = await axios.get(pdmUrl, {
+async function getPDMdata(id,skip) {
+	let res = await axios.get(pdmUrl + '/?$skip=' + skip , {
 		headers: {'vid': id}
 	}).then(resp => {
+		console.log("response.....",resp)
 		return resp.data
 	}).catch(err => {
-		console.log('Error ==> PDM GET :: ')
+		console.log('Error ==> PDM GET :: ',err)
 		return []
 	})
 	return res;
@@ -123,14 +127,23 @@ function asiProductMap(asi_product, _pdmProduct) {
 
 	// ************ Required Fields
 	asi_product.ExternalProductId = pdmProduct.sku;
-	asi_product.Name = pdmProduct.product_name;
+
+	// remove superscripts and modifier letters 
+	if(pdmProduct.product_name != undefined){
+		let newProductName = pdmProduct.product_name.replace('\u2122', '')
+	    asi_product.Name = newProductName;
+	}
 	
 	if (pdmProduct.description != undefined) {
 		
 		// remove all html tags
+		console.log("before pdmproduct description....",pdmProduct.description)
 		let value = pdmProduct.description.replace(/<[^>]+>/ig, '');
 		value = value.replace(/\n/g, ' ');
 		value = value.replace("\"", "");
+		value = value.replace(/&nbsp;/g, ' ');
+
+		console.log("&&&&&&& after asi prod desc", value)
 		
 		asi_product.Description = value
 	} else {
@@ -178,7 +191,21 @@ function asiProductMap(asi_product, _pdmProduct) {
 	// 	asi_product.LineNames = [pdmProduct.linename];
 	// }
 	if (pdmProduct.search_keyword != undefined && pdmProduct.search_keyword.length > 0) {
-		asi_product.ProductKeywords = pdmProduct.search_keyword
+		let keywordsArr = []
+
+		// check if each keyword should have length less than 30
+		for(let item in pdmProduct.search_keyword){
+			if(pdmProduct.search_keyword[item].length <= 30){	
+				keywordsArr.push(pdmProduct.search_keyword[item])
+			}
+		}
+		if(keywordsArr.length < 30){
+			asi_product.ProductKeywords = keywordsArr	
+		}
+		else if(keywordsArr.length > 30){
+			keywordsArr = _.slice(keywordsArr,0,30)
+			asi_product.ProductKeywords = keywordsArr	
+		}
 	}
 	
 	// asi_product.ProductDataSheet = '';
@@ -385,12 +412,16 @@ function asiProductMap(asi_product, _pdmProduct) {
 					}]
 				})
 				if (exist == undefined || exist.length == 0) {
-					ItemWeight.Values.push({
-						Value: [{
-							Value: item.product_weight,
-							Unit: unit
-						}]
-					})
+
+					// ItemWeight should be greater than 0.01
+					if(item.product_weight > 0.01){
+						ItemWeight.Values.push({
+							Value: [{
+								Value: item.product_weight,
+								Unit: unit
+							}]
+						})	
+					}
 				}
 			}
 
@@ -511,15 +542,18 @@ function asiProductMap(asi_product, _pdmProduct) {
 			if (item.global_price_type == 'global' && item.type == 'decorative' && item.price_type == 'regular') {
 				let _prices = []
 				for (let [inx, inneritem] of item.price_range.entries()) {
-					_prices.push({
-						Sequence: inx + 1,
-						Qty: inneritem.qty.gte,
-						ListPrice: inneritem.price,
-						DiscountCode: inneritem.code,
-						PriceUnit: {
-							ItemsPerUnit: 1
-						}
-					})
+					console.log("%%%%%%%%",inneritem.code)
+					if(inneritem.code !== null && inneritem.code !== ''){
+						_prices.push({
+							Sequence: inx + 1,
+							Qty: inneritem.qty.gte,
+							ListPrice: inneritem.price,
+							DiscountCode: inneritem.code,
+							PriceUnit: {
+								ItemsPerUnit: 1
+							}
+						})	
+					}
 				}
 				PriceGrids.push({
 					IsBasePrice: true,
@@ -663,10 +697,11 @@ function asiProductMap(asi_product, _pdmProduct) {
 	}
 }
 
-async function syncAsiFunction(vid) {
-	console.log('*******************  ASI SYNC STARTED  *******************')
-	let pdmData = await getPDMdata(vid)
-	// console.log('\n', pdmData)
+async function syncAsiFunction(vid,skip) {
+	console.log('*******************  ASI SYNC STARTED  *******************',skip)
+	let pdmData = await getPDMdata(vid,skip)
+	console.log('\n', pdmData)
+	let total_hits = pdmData.hits.total
 
 	let asiauth = await asiAuth()
 	if (Object.keys(asiauth).length > 0) {
@@ -712,6 +747,14 @@ async function syncAsiFunction(vid) {
 					// console.log('+++++++++++++++++++++++++++++++++ New', update_product)
 					console.log('+++++++++++++++++++++++++++++++++', update_product, '\n DATA::', JSON.stringify(map_product) + '\n')
 				}
+
+				count ++
+			}
+
+			if(count < total_hits){
+				skip = skip + 10
+				console.log('calling syncASi for next 10 records.............')
+				syncAsiFunction(vid,skip)
 			}
 		}
 	}
@@ -726,11 +769,13 @@ async function syncSageFunction(vid) {
 q.process(async(job, next) => {
 	try {
 		console.log('job.data --> Sync_id :: ', job.data.Sync_id, '  Vid :: ', job.data.userdetails.vid)
+		count = 0
+		skip = 0
 		let getAPIdata = await getAPI(job.data.Sync_id)
 		// console.log('getAPIdata :: ', getAPIdata)
 		if (Object.keys(getAPIdata).length > 0) {
 			if (getAPIdata.syncOn == 'ASI') {
-				syncAsiFunction(job.data.userdetails.vid)
+				syncAsiFunction(job.data.userdetails.vid,skip)
 			} else if (getAPIdata.syncOn == 'SAGE') {
 				syncSageFunction(job.data.userdetails.vid)
 			}
