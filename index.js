@@ -41,6 +41,7 @@ let lookup = {
 }
 
 let count = 0
+// let prod_count = 0
 let skip = 0
 
 async function getAPI(id) {
@@ -56,7 +57,6 @@ async function getPDMdata(id,skip) {
 	let res = await axios.get(pdmUrl + '/?$skip=' + skip , {
 		headers: {'vid': id}
 	}).then(resp => {
-		console.log("response.....",resp)
 		return resp.data
 	}).catch(err => {
 		console.log('Error ==> PDM GET :: ',err)
@@ -120,6 +120,16 @@ async function postASIProduct(aToken, item) {
 	return resp	
 }
 
+async function updateProductProcessed(syncId,prod_count) {
+	let response = await axios.patch(psyncUrl + '/' + syncId, {'no-product-process': prod_count}).then(res => {
+		return res
+	})
+	.catch(err => {
+		console.log('Update error....', err)
+	})
+	return response
+}
+
 function asiProductMap(asi_product, _pdmProduct) {
 	try {
 	// console.log('.........................................', lookupData)
@@ -137,13 +147,11 @@ function asiProductMap(asi_product, _pdmProduct) {
 	if (pdmProduct.description != undefined) {
 		
 		// remove all html tags
-		console.log("before pdmproduct description....",pdmProduct.description)
 		let value = pdmProduct.description.replace(/<[^>]+>/ig, '');
 		value = value.replace(/\n/g, ' ');
 		value = value.replace("\"", "");
 		value = value.replace(/&nbsp;/g, ' ');
 
-		console.log("&&&&&&& after asi prod desc", value)
 		
 		asi_product.Description = value
 	} else {
@@ -542,7 +550,6 @@ function asiProductMap(asi_product, _pdmProduct) {
 			if (item.global_price_type == 'global' && item.type == 'decorative' && item.price_type == 'regular') {
 				let _prices = []
 				for (let [inx, inneritem] of item.price_range.entries()) {
-					console.log("%%%%%%%%",inneritem.code)
 					if(inneritem.code !== null && inneritem.code !== ''){
 						_prices.push({
 							Sequence: inx + 1,
@@ -697,7 +704,7 @@ function asiProductMap(asi_product, _pdmProduct) {
 	}
 }
 
-async function syncAsiFunction(vid,skip) {
+async function syncAsiFunction(vid,skip,syncId) {
 	console.log('*******************  ASI SYNC STARTED  *******************',skip)
 	let pdmData = await getPDMdata(vid,skip)
 	console.log('\n', pdmData)
@@ -724,6 +731,7 @@ async function syncAsiFunction(vid,skip) {
 				// check item exist in ASI or not
 				let xid = item._source.sku
 				let asi_product = await getASIProduct(xid, aToken)
+				count ++
 				if (Object.keys(asi_product).length > 0) {
 					// Product Found --> Update Product to ASI
 
@@ -735,6 +743,8 @@ async function syncAsiFunction(vid,skip) {
 
 						let update_product = await postASIProduct(aToken, map_product)
 						console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product, '\n UPDATE:: ', JSON.stringify(map_product) + '\n')
+
+						let updated_counted = await updateProductProcessed(syncId,count)
 						// console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Update', update_product)
 					// } 
 				} else {
@@ -746,15 +756,17 @@ async function syncAsiFunction(vid,skip) {
 					let update_product = await postASIProduct(aToken, map_product)
 					// console.log('+++++++++++++++++++++++++++++++++ New', update_product)
 					console.log('+++++++++++++++++++++++++++++++++', update_product, '\n DATA::', JSON.stringify(map_product) + '\n')
+
+					let updated_counted = await updateProductProcessed(syncId,count)
 				}
 
-				count ++
+				// count ++
 			}
 
 			if(count < total_hits){
 				skip = skip + 10
 				console.log('calling syncASi for next 10 records.............')
-				syncAsiFunction(vid,skip)
+				syncAsiFunction(vid,skip,syncId)
 			}
 		}
 	}
@@ -775,7 +787,7 @@ q.process(async(job, next) => {
 		// console.log('getAPIdata :: ', getAPIdata)
 		if (Object.keys(getAPIdata).length > 0) {
 			if (getAPIdata.syncOn == 'ASI') {
-				syncAsiFunction(job.data.userdetails.vid,skip)
+				syncAsiFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
 			} else if (getAPIdata.syncOn == 'SAGE') {
 				syncSageFunction(job.data.userdetails.vid)
 			}
