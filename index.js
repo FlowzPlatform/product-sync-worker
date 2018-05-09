@@ -5,10 +5,16 @@ let async = require('asyncawait/async');
 let await = require('asyncawait/await');
 const cxnOptions = app.rethinkdb
 var pino = require('pino');
+var parser = require('xml2json');
+let moment = require('moment')
+moment().format()
 
 let asi = process.env.asi
 let asi_user = process.env.asi_user
 let asi_pass = process.env.asi_password
+let sageAccId = process.env.sageAccId
+let sageLoginId = process.env.sageLoginId
+let sagePwd = process.env.sagePwd
 
 // var mongodb = require('mongodb');
 // var elasticsearch = require('elasticsearch');
@@ -25,6 +31,7 @@ const q = new Queue(cxnOptions, qOptions)
 let serviceUrl = 'http://localhost:3030';
 let pdmUrl = 'http://api.flowzcluster.tk/pdmnew/pdm'
 let asiUrl = 'https://sandbox-productservice.asicentral.com/api/v4/'
+let sageUrl = 'https://www.promoplace.com/ws/ws.dll/XMLDataStream'
 
 // let lookup = 'https://sandbox-productservice.asicentral.com/api/v4/lookup/categorieslist'
 let psyncUrl = serviceUrl + '/onlysync'
@@ -86,6 +93,24 @@ async function asiAuth() {
 	return resp
 }
 
+async function convertToJson(xml) {
+  var options = {
+   object: true,
+   reversible: true
+  };
+
+  var jsonData = parser.toJson(xml,options);
+  // jsonData = JSON.stringify(jsonData)
+  console.log("to json -> %s", jsonData);
+  return jsonData
+}
+
+async function convertToXml(json) {
+  var xml = parser.toXml(json);
+  console.log("back to xml -> %s", xml);
+  return xml
+}
+
 async function getASIProduct(xid, aToken) {
 	let url = asiUrl + 'product/' + xid
 	let resp = await axios.get(url, {
@@ -99,6 +124,30 @@ async function getASIProduct(xid, aToken) {
 			console.log('Error ==> ASI GET PRODUCT ::', err.response.data)
 		}
 		return {}
+	})
+	return resp	
+}
+
+async function getSageProduct(spc) {
+	let url = sageUrl
+	let reqObj = '<?xml version="1.0" encoding="UTF-8"?><XMLDataStreamRequest><Ver>3.2</Ver><Auth><AcctID>' + sageAccId + '</AcctID><LoginID>' + sageLoginId + '</LoginID><Password>' + sagePwd + '</Password></Auth><ProductDetail><SPC>' + spc + '</SPC></ProductDetail></XMLDataStreamRequest>'
+	let resp = await axios.post(url, reqObj, {headers: {'content-type': 'application/xml'}}).then(async res => {
+		let jsonRes = await convertToJson(res.data)
+		if(jsonRes.hasOwnProperty('XMLDataStreamResponse')){
+			let innerResponse = jsonRes['XMLDataStreamResponse']
+			if(innerResponse.hasOwnProperty('ErrMsg')){
+				let errObj = {XMLDataStreamResponse: { Ver: { '$t': '3.2' }, Auth: { AcctID : { '$t': sageAccId }, LoginID : { '$t' : sageLoginId }, Password : { '$t' : sagePwd }}, LegalNote: { '$t': 'USE SUBJECT TO TERMS OF YOUR AGREEMENT.  UNAUTHORIZED USE PROHIBITED.  SUPPLIER INFORMATION IS CONFIDENTIAL.  (C) 2018 QUICK TECHNOLOGIES INC.' },ProductDetail: {}}}
+				return errObj
+			}
+			else if(innerResponse.hasOwnProperty('ProductDetail')){
+				jsonRes['XMLDataStreamResponse']['Auth'] = { AcctID : { '$t': sageAccId }, LoginID : { '$t' : sageLoginId }, Password : { '$t' : sagePwd } }
+				return jsonRes
+			}
+		}
+		else {
+			console.log('no')
+		}
+	}).catch(err => {
 	})
 	return resp	
 }
@@ -120,6 +169,16 @@ async function postASIProduct(aToken, item) {
 	return resp	
 }
 
+async function postSageProduct(xmlProduct) {
+	let url = sageUrl
+	let resp = await axios.post(url, xmlProduct, {headers: {'content-type': 'application/xml'}}).then(async res => {
+		let jsonRes = await convertToJson(res.data)
+		return jsonRes
+	}).catch(err => {
+	})
+	return resp	
+}
+
 async function updateProductProcessed(syncId,prod_count) {
 	let response = await axios.patch(psyncUrl + '/' + syncId, {'no-product-process': prod_count}).then(res => {
 		return res
@@ -128,6 +187,232 @@ async function updateProductProcessed(syncId,prod_count) {
 		console.log('Update error....', err)
 	})
 	return response
+}
+
+function sageProductMap(sageProduct, pdmProduct){
+	console.log('&&&&&', sageProduct)
+	try {
+		let pdmProduct1 = _.cloneDeep(pdmProduct)
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SPC"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SPC"]["$t"] = pdmProduct1.sku
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ProductID"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ProductID"]["$t"] = parseInt(pdmProduct1.product_id)
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PrName"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PrName"]["$t"] = pdmProduct1.product_name.replace(/\u2122|\ufffd/gi, '')
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["LineName"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["LineName"]["$t"] = pdmProduct1.linename
+
+		let newDesc = pdmProduct1.description.replace(/\n|\"|&nbsp;|\u2122|\ufffd/g, ' ')
+
+		if(newDesc.length <= 500){
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Description"] = {"$t" : ''}
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Description"]["$t"] = newDesc	
+		}
+		else {
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Description"] = {"$t" : ''}
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Description"]["$t"] = newDesc.substring(0,499)
+		}
+
+		let newCategories = _.join(pdmProduct1.categories, ',');
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Category"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Category"]["$t"] = newCategories
+
+		let newKeywords = _.join(pdmProduct1.search_keyword, ',');
+
+		if(newKeywords.length <= 200){
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Keywords"] = {"$t" : ''}
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Keywords"]["$t"] = newKeywords	
+		}
+		else {
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Keywords"] = {"$t" : ''}
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Keywords"]["$t"] = newKeywords.substring(0,199)
+		}
+
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["MadeInCountry"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["MadeInCountry"]["$t"] = pdmProduct1.country
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ExpDate"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ExpDate"]["$t"] = moment(pdmProduct1.valid_up_to).format("MM/DD/YY")
+
+		// mapping attribute colors
+		if(pdmProduct1.hasOwnProperty('attributes')){
+			if(pdmProduct1["attributes"].colors.length > 0){
+				let newColors = _.join(pdmProduct1["attributes"].colors, ',');
+				if(newColors.length <= 300){
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Colors"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Colors"]["$t"] = newColors	
+				}
+				else {
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Colors"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Colors"]["$t"] = newColors.substring(0,299)
+				}
+			}
+		}
+
+		// mapping imprint data fields
+		if(pdmProduct1.hasOwnProperty('imprint_data')){
+			for(let i=0; i < pdmProduct1.imprint_data.length; i++){
+				if(pdmProduct1.imprint_data[i].imprint_area.length < 100){
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ImprintArea"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ImprintArea"]["$t"] = pdmProduct1.imprint_data[i].imprint_area
+				}
+
+		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Decoration Method"] = {"$t" : ''}
+		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Decoration Method"]["$t"] = pdmProduct1.imprint_data[i].imprint_method
+
+		        if(pdmProduct1.imprint_data[i].production_days !== '' && pdmProduct1.imprint_data[i].production_days !== undefined && pdmProduct1.imprint_data[i].production_unit !== '' && pdmProduct1.imprint_data[i].production_unit !== undefined){
+		        	
+		        	let prodTime =  pdmProduct1.imprint_data[i].production_days + pdmProduct1.imprint_data[i].production_unit
+		        	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ProdTime"] = {"$t" : ''}
+		            sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ProdTime"]["$t"] = prodTime
+
+		        }
+
+
+		        if(pdmProduct1.imprint_data[i].setup_charge !== '' && pdmProduct1.imprint_data[i].setup_charge !== undefined){
+		         let SetupChg = ''
+		         let SetupChgCode = ''
+		         let setupChgArr = pdmProduct1.imprint_data[i].setup_charge.split('(')
+		         SetupChg = setupChgArr[0]
+		         SetupChgCode = (setupChgArr[1].split(')'))[0]
+
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SetupChg"] = {"$t" : ''}
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SetupChg"]["$t"] = SetupChg
+
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SetupChgCode"] = {"$t" : ''}
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SetupChgCode"]["$t"] = SetupChgCode
+		        }
+
+		        if(pdmProduct1.imprint_data[i].additional_color_charge !== '' && pdmProduct1.imprint_data[i].additional_color_charge !== undefined){
+		         let AddClrChg = ''
+		         let AddClrChgCode = ''
+		         let addClrChgArr = pdmProduct1.imprint_data[i].additional_color_charge.split('(')
+		         AddClrChg = addClrChgArr[0]
+		         AddClrChgCode = (addClrChgArr[1].split(')'))[0]
+
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["AddClrChg"] = {"$t" : ''}
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["AddClrChg"]["$t"] = AddClrChg
+
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["AddClrChgCode"] = {"$t" : ''}
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["AddClrChgCode"]["$t"] = AddClrChgCode
+		        }
+
+		        if(pdmProduct1.imprint_data[i].price_included !== '' && pdmProduct1.imprint_data[i].price_included !== undefined){
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PriceIncludes"] = {"$t" : ''}
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PriceIncludes"]["$t"] = pdmProduct1.imprint_data[i].price_included
+		        }
+
+			}
+		}
+
+		//mapping shipping data fields
+		if(pdmProduct1.hasOwnProperty('shipping')){
+			for(let i=0 ; i<pdmProduct1.shipping.length ; i++){
+
+				if(pdmProduct1.shipping[i].carton_size_unit === 'inches'){
+
+					if(pdmProduct1.shipping[i].carton_length !== "" && pdmProduct1.shipping[i].carton_length !== undefined){
+					    sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonL"] = {"$t" : ''}
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonL"]["$t"] = parseInt(pdmProduct1.shipping[i].carton_length)	
+					}
+
+					if(pdmProduct1.shipping[i].carton_width !== "" && pdmProduct1.shipping[i].carton_width !== undefined){
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonW"] = {"$t" : ''}
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonW"]["$t"] = parseInt(pdmProduct1.shipping[i].carton_width)	
+					}
+
+					if(pdmProduct1.shipping[i].carton_height !== "" && pdmProduct1.shipping[i].carton_height !== undefined){
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonH"] = {"$t" : ''}
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonH"]["$t"] = parseInt(pdmProduct1.shipping[i].carton_height)	
+					}
+
+				}
+
+				if(pdmProduct1.shipping[i].carton_weight_unit === 'LBS'){
+
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["WeightPerCarton"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["WeightPerCarton"]["$t"] = parseInt(pdmProduct1.shipping[i].carton_weight)
+
+				}
+				
+				if(pdmProduct1.shipping[i].shipping_qty_per_carton !== "" && pdmProduct1.shipping[i].shipping_qty_per_carton !== undefined){
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["UnitsPerCarton"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["UnitsPerCarton"]["$t"] = parseInt(pdmProduct1.shipping[i].shipping_qty_per_carton)
+				}
+
+		       if(pdmProduct1.shipping[i].fob_country_code.length <= 2){
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointCountry"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointCountry"]["$t"] = pdmProduct1.shipping[i].fob_country_code
+		       }
+
+		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointZip"] = {"$t" : ''}
+		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointZip"]["$t"] = parseInt(pdmProduct1.shipping[i].fob_zip_code)
+			}
+
+			// find packaging key in features list
+			if(pdmProduct1.hasOwnProperty('features')){
+				for(let item in pdmProduct1["features"]){
+					if(pdmProduct1["features"][item]["key"] === "Packaging"){
+						if(pdmProduct1["features"][item]["value"].length <= 50){
+							sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Package"] = {"$t" : ''}
+			                sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Package"]["$t"] = pdmProduct1["features"][item]["value"]	
+						}
+					}
+				}
+			}
+		}
+
+		//mapping pricing data fields
+		if(pdmProduct1.hasOwnProperty('pricing')){
+			for(let item in pdmProduct1['pricing']){
+				if(pdmProduct1['pricing'][item]['price_type'] === 'regular' && pdmProduct1['pricing'][item]['type'] === 'decorative' && pdmProduct1['pricing'][item]['global_price_type'] === 'global'){
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Currency"] = {"$t" : ''}
+	                sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Currency"]["$t"] = pdmProduct1["pricing"][item]["currency"]
+
+					for(let price_item in pdmProduct1['pricing'][item]['price_range']){
+						let indx = parseInt(price_item) + 1
+						let qty = 'Qty' + indx
+						let price = 'Prc' + indx
+						sageProduct["XMLDataStreamResponse"]["ProductDetail"][qty] = {"$t" : ''}
+	                	sageProduct["XMLDataStreamResponse"]["ProductDetail"][qty]["$t"] = pdmProduct1["pricing"][item]["price_range"][price_item]["qty"]["gte"]
+
+	                	sageProduct["XMLDataStreamResponse"]["ProductDetail"][price] = {"$t" : ''}
+	                	sageProduct["XMLDataStreamResponse"]["ProductDetail"][price]["$t"] = pdmProduct1["pricing"][item]["price_range"][price_item]["price"]
+					}
+				}
+
+				// if price_type is piece_wise_price map it with PiecesPerUnit
+				if(pdmProduct1['pricing'][item]['price_type'] === 'piece_wise_price' && pdmProduct1['pricing'][item]['type'] === 'decorative' && pdmProduct1['pricing'][item]['global_price_type'] === 'global'){
+					for(let price_item in pdmProduct1['pricing'][item]['price_range']){
+						let indx1 = parseInt(price_item) + 1
+						let qty1 = 'PiecesPerUnit' + indx1
+						sageProduct["XMLDataStreamResponse"]["ProductDetail"][qty1] = {"$t" : ''}
+	                	sageProduct["XMLDataStreamResponse"]["ProductDetail"][qty1]["$t"] = pdmProduct1["pricing"][item]["price_range"][price_item]["qty"]["gte"]
+					}
+				}
+			}
+		}
+
+		// mapping price_1 as base_price with Standard catalog price column 1
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CatPrc1"] = {"$t" : ''}
+    	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CatPrc1"]["$t"] = pdmProduct1["price_1"]
+
+    	//mapping image link
+    	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PicLink"] = {"$t" : ''}
+    	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PicLink"]["$t"] = 'https://res.cloudinary.com/flowz/raw/upload/v1525085146/product_images/f9ea80ee-6329-48de-b247-a029e1cd841a/54694-blue_1.jpg'
+
+
+		console.log('sageproductmap...', sageProduct)
+		return sageProduct
+	}
+	catch (e) {
+		console.log('Error in SageProductMapping......', e)
+	}
 }
 
 function asiProductMap(asi_product, _pdmProduct) {
@@ -140,7 +425,7 @@ function asiProductMap(asi_product, _pdmProduct) {
 
 	// remove superscripts and modifier letters 
 	if(pdmProduct.product_name != undefined){
-		let newProductName = pdmProduct.product_name.replace('\u2122', '')
+		let newProductName = pdmProduct.product_name.replace(/\u2122|\ufffd/gi, '')
 	    asi_product.Name = newProductName;
 	}
 	
@@ -160,13 +445,16 @@ function asiProductMap(asi_product, _pdmProduct) {
 
 
 	if (pdmProduct.activeSummary != undefined) {
-		if (pdmProduct.activeSummary.length < 130) {
-			asi_product.Summary = pdmProduct.activeSummary;
+		let newActiveSummary = pdmProduct.activeSummary.replace(/\u2122|\ufffd/gi, '')
+
+		if (newActiveSummary.length < 130) {
+			asi_product.Summary = newActiveSummary;
 		} else {
-			asi_product.Summary = pdmProduct.activeSummary.substring(0, 129);
+			asi_product.Summary = newActiveSummary.substring(0, 129);
 		}
 	}  else {
-		asi_product.Summary = pdmProduct.product_name;
+		let ProductName = pdmProduct.product_name.replace(/\u2122|\ufffd/gi, '')
+		asi_product.Summary = ProductName;
 	}
 	
 
@@ -631,7 +919,7 @@ function asiProductMap(asi_product, _pdmProduct) {
 					fSeq++;
 				}
 			}
-		}
+		}	
 	}
 	// ******** Done PriceGrids
 
@@ -773,8 +1061,42 @@ async function syncAsiFunction(vid,skip,syncId) {
 	return 0;
 }
 
-async function syncSageFunction(vid) {
+async function syncSageFunction(vid,skip,syncId) {
 	console.log('*******************  SAGE SYNC STARTED  *******************')
+	let pdmData = await getPDMdata(vid,skip)
+	console.log('\n', pdmData)
+	let total_hits = pdmData.hits.total
+
+	if (pdmData.hasOwnProperty('hits')) {
+			for (let item of pdmData.hits.hits) {
+				// check item exist in Sage or not
+				let spc = item._source.sku
+				let sage_product = await getSageProduct(spc)
+				count ++
+				if (sage_product.hasOwnProperty('XMLDataStreamResponse')) {
+					
+						let mapProduct = await sageProductMap(sage_product, item._source)
+
+						let xmlProduct = await convertToXml(mapProduct)
+
+						console.log('xmlproduct ======>', xmlProduct)
+
+						let update_product = await postSageProduct(xmlProduct)
+						console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% update product %%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product)
+
+						let updated_counted = await updateProductProcessed(syncId,count)
+
+				// count ++
+			}
+
+		}
+			if(count < total_hits){
+				skip = skip + 10
+				console.log('calling syncSage for next 10 records.............',skip)
+				syncSageFunction(vid,skip,syncId)
+			}
+	}
+
 	return 0;
 }
 
@@ -789,7 +1111,7 @@ q.process(async(job, next) => {
 			if (getAPIdata.syncOn == 'ASI') {
 				syncAsiFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
 			} else if (getAPIdata.syncOn == 'SAGE') {
-				syncSageFunction(job.data.userdetails.vid)
+				syncSageFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
 			}
 		}
 		// console.log('-----------------------||  Done  ||------------------------')
