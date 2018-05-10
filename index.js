@@ -101,13 +101,11 @@ async function convertToJson(xml) {
 
   var jsonData = parser.toJson(xml,options);
   // jsonData = JSON.stringify(jsonData)
-  console.log("to json -> %s", jsonData);
   return jsonData
 }
 
 async function convertToXml(json) {
   var xml = parser.toXml(json);
-  console.log("back to xml -> %s", xml);
   return xml
 }
 
@@ -256,28 +254,28 @@ function sageProductMap(sageProduct, pdmProduct){
 
 		// mapping imprint data fields
 		if(pdmProduct1.hasOwnProperty('imprint_data')){
-			for(let i=0; i < pdmProduct1.imprint_data.length; i++){
-				if(pdmProduct1.imprint_data[i].imprint_area.length < 100){
+			// for(let i=0; i < pdmProduct1.imprint_data.length; i++){
+				if(pdmProduct1.imprint_data[0].imprint_area.length < 100){
 					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ImprintArea"] = {"$t" : ''}
-			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ImprintArea"]["$t"] = pdmProduct1.imprint_data[i].imprint_area
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ImprintArea"]["$t"] = pdmProduct1.imprint_data[0].imprint_area
 				}
 
 		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Decoration Method"] = {"$t" : ''}
-		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Decoration Method"]["$t"] = pdmProduct1.imprint_data[i].imprint_method
+		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Decoration Method"]["$t"] = pdmProduct1.imprint_data[0].imprint_method
 
-		        if(pdmProduct1.imprint_data[i].production_days !== '' && pdmProduct1.imprint_data[i].production_days !== undefined && pdmProduct1.imprint_data[i].production_unit !== '' && pdmProduct1.imprint_data[i].production_unit !== undefined){
+		        if(pdmProduct1.imprint_data[0].production_days !== '' && pdmProduct1.imprint_data[0].production_days !== undefined && pdmProduct1.imprint_data[0].production_unit !== '' && pdmProduct1.imprint_data[0].production_unit !== undefined){
 		        	
-		        	let prodTime =  pdmProduct1.imprint_data[i].production_days + pdmProduct1.imprint_data[i].production_unit
+		        	let prodTime =  pdmProduct1.imprint_data[0].production_days + pdmProduct1.imprint_data[0].production_unit
 		        	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ProdTime"] = {"$t" : ''}
 		            sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ProdTime"]["$t"] = prodTime
 
 		        }
 
 
-		        if(pdmProduct1.imprint_data[i].setup_charge !== '' && pdmProduct1.imprint_data[i].setup_charge !== undefined){
+		        if(pdmProduct1.imprint_data[0].setup_charge !== '' && pdmProduct1.imprint_data[0].setup_charge !== undefined){
 		         let SetupChg = ''
 		         let SetupChgCode = ''
-		         let setupChgArr = pdmProduct1.imprint_data[i].setup_charge.split('(')
+		         let setupChgArr = pdmProduct1.imprint_data[0].setup_charge.split('(')
 		         SetupChg = setupChgArr[0]
 		         SetupChgCode = (setupChgArr[1].split(')'))[0]
 
@@ -288,10 +286,10 @@ function sageProductMap(sageProduct, pdmProduct){
 		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SetupChgCode"]["$t"] = SetupChgCode
 		        }
 
-		        if(pdmProduct1.imprint_data[i].additional_color_charge !== '' && pdmProduct1.imprint_data[i].additional_color_charge !== undefined){
+		        if(pdmProduct1.imprint_data[0].additional_color_charge !== '' && pdmProduct1.imprint_data[0].additional_color_charge !== undefined){
 		         let AddClrChg = ''
 		         let AddClrChgCode = ''
-		         let addClrChgArr = pdmProduct1.imprint_data[i].additional_color_charge.split('(')
+		         let addClrChgArr = pdmProduct1.imprint_data[0].additional_color_charge.split('(')
 		         AddClrChg = addClrChgArr[0]
 		         AddClrChgCode = (addClrChgArr[1].split(')'))[0]
 
@@ -302,57 +300,55 @@ function sageProductMap(sageProduct, pdmProduct){
 		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["AddClrChgCode"]["$t"] = AddClrChgCode
 		        }
 
-		        if(pdmProduct1.imprint_data[i].price_included !== '' && pdmProduct1.imprint_data[i].price_included !== undefined){
+		        if(pdmProduct1.imprint_data[0].price_included !== '' && pdmProduct1.imprint_data[0].price_included !== undefined){
 		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PriceIncludes"] = {"$t" : ''}
-		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PriceIncludes"]["$t"] = pdmProduct1.imprint_data[i].price_included
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PriceIncludes"]["$t"] = pdmProduct1.imprint_data[0].imprint_position
 		        }
 
-			}
+			// }
 		}
 
 		//mapping shipping data fields
 		if(pdmProduct1.hasOwnProperty('shipping')){
-			for(let i=0 ; i<pdmProduct1.shipping.length ; i++){
 
-				if(pdmProduct1.shipping[i].carton_size_unit === 'inches'){
+				if(pdmProduct1.shipping[0].carton_size_unit === 'inches'){
 
-					if(pdmProduct1.shipping[i].carton_length !== "" && pdmProduct1.shipping[i].carton_length !== undefined){
+					if(pdmProduct1.shipping[0].carton_length !== "" && pdmProduct1.shipping[0].carton_length !== undefined){
 					    sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonL"] = {"$t" : ''}
-				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonL"]["$t"] = parseInt(pdmProduct1.shipping[i].carton_length)	
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonL"]["$t"] = parseInt(pdmProduct1.shipping[0].carton_length)	
 					}
 
-					if(pdmProduct1.shipping[i].carton_width !== "" && pdmProduct1.shipping[i].carton_width !== undefined){
+					if(pdmProduct1.shipping[0].carton_width !== "" && pdmProduct1.shipping[0].carton_width !== undefined){
 				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonW"] = {"$t" : ''}
-				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonW"]["$t"] = parseInt(pdmProduct1.shipping[i].carton_width)	
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonW"]["$t"] = parseInt(pdmProduct1.shipping[0].carton_width)	
 					}
 
-					if(pdmProduct1.shipping[i].carton_height !== "" && pdmProduct1.shipping[i].carton_height !== undefined){
+					if(pdmProduct1.shipping[0].carton_height !== "" && pdmProduct1.shipping[0].carton_height !== undefined){
 				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonH"] = {"$t" : ''}
-				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonH"]["$t"] = parseInt(pdmProduct1.shipping[i].carton_height)	
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonH"]["$t"] = parseInt(pdmProduct1.shipping[0].carton_height)	
 					}
 
 				}
 
-				if(pdmProduct1.shipping[i].carton_weight_unit === 'LBS'){
+				if(pdmProduct1.shipping[0].carton_weight_unit === 'LBS'){
 
 					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["WeightPerCarton"] = {"$t" : ''}
-			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["WeightPerCarton"]["$t"] = parseInt(pdmProduct1.shipping[i].carton_weight)
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["WeightPerCarton"]["$t"] = parseInt(pdmProduct1.shipping[0].carton_weight)
 
 				}
 				
-				if(pdmProduct1.shipping[i].shipping_qty_per_carton !== "" && pdmProduct1.shipping[i].shipping_qty_per_carton !== undefined){
+				if(pdmProduct1.shipping[0].shipping_qty_per_carton !== "" && pdmProduct1.shipping[0].shipping_qty_per_carton !== undefined){
 			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["UnitsPerCarton"] = {"$t" : ''}
-			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["UnitsPerCarton"]["$t"] = parseInt(pdmProduct1.shipping[i].shipping_qty_per_carton)
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["UnitsPerCarton"]["$t"] = parseInt(pdmProduct1.shipping[0].shipping_qty_per_carton)
 				}
 
-		       if(pdmProduct1.shipping[i].fob_country_code.length <= 2){
+		       if(pdmProduct1.shipping[0].fob_country_code.length <= 2){
 			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointCountry"] = {"$t" : ''}
-			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointCountry"]["$t"] = pdmProduct1.shipping[i].fob_country_code
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointCountry"]["$t"] = pdmProduct1.shipping[0].fob_country_code
 		       }
 
 		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointZip"] = {"$t" : ''}
-		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointZip"]["$t"] = parseInt(pdmProduct1.shipping[i].fob_zip_code)
-			}
+		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointZip"]["$t"] = parseInt(pdmProduct1.shipping[0].fob_zip_code)
 
 			// find packaging key in features list
 			if(pdmProduct1.hasOwnProperty('features')){
@@ -370,6 +366,7 @@ function sageProductMap(sageProduct, pdmProduct){
 		//mapping pricing data fields
 		if(pdmProduct1.hasOwnProperty('pricing')){
 			for(let item in pdmProduct1['pricing']){
+				let price_code = ''
 				if(pdmProduct1['pricing'][item]['price_type'] === 'regular' && pdmProduct1['pricing'][item]['type'] === 'decorative' && pdmProduct1['pricing'][item]['global_price_type'] === 'global'){
 					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Currency"] = {"$t" : ''}
 	                sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Currency"]["$t"] = pdmProduct1["pricing"][item]["currency"]
@@ -378,12 +375,16 @@ function sageProductMap(sageProduct, pdmProduct){
 						let indx = parseInt(price_item) + 1
 						let qty = 'Qty' + indx
 						let price = 'Prc' + indx
+						price_code = price_code + pdmProduct1["pricing"][item]["price_range"][price_item]["code"]
 						sageProduct["XMLDataStreamResponse"]["ProductDetail"][qty] = {"$t" : ''}
 	                	sageProduct["XMLDataStreamResponse"]["ProductDetail"][qty]["$t"] = pdmProduct1["pricing"][item]["price_range"][price_item]["qty"]["gte"]
 
 	                	sageProduct["XMLDataStreamResponse"]["ProductDetail"][price] = {"$t" : ''}
 	                	sageProduct["XMLDataStreamResponse"]["ProductDetail"][price]["$t"] = pdmProduct1["pricing"][item]["price_range"][price_item]["price"]
 					}
+
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PrCode"] = {"$t" : ''}
+                	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PrCode"]["$t"] = price_code
 				}
 
 				// if price_type is piece_wise_price map it with PiecesPerUnit
@@ -403,11 +404,19 @@ function sageProductMap(sageProduct, pdmProduct){
     	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CatPrc1"]["$t"] = pdmProduct1["price_1"]
 
     	//mapping image link
-    	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PicLink"] = {"$t" : ''}
-    	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PicLink"]["$t"] = 'https://res.cloudinary.com/flowz/raw/upload/v1525085146/product_images/f9ea80ee-6329-48de-b247-a029e1cd841a/54694-blue_1.jpg'
+    	if(pdmProduct1.hasOwnProperty('images')){
+    		let secure_url1 = ''
+    		for(let item in pdmProduct1['images']){
+    			for(let imgItem in pdmProduct1['images'][item]['images']){
+    				if(pdmProduct1['images'][item]['images'][imgItem]['web_image'] === pdmProduct1['default_image']){
+    					secure_url1 = pdmProduct1['images'][item]['images'][imgItem]['secure_url']
+			    		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PicLink"] = {"$t" : ''}
+				    	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PicLink"]["$t"] = secure_url1
+    				}
+    			}
+    		}   	 
+    	}
 
-
-		console.log('sageproductmap...', sageProduct)
 		return sageProduct
 	}
 	catch (e) {
