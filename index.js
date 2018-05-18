@@ -5,10 +5,16 @@ let async = require('asyncawait/async');
 let await = require('asyncawait/await');
 const cxnOptions = app.rethinkdb
 var pino = require('pino');
+var parser = require('xml2json');
+let moment = require('moment')
+moment().format()
 
 let asi = process.env.asi
 let asi_user = process.env.asi_user
 let asi_pass = process.env.asi_password
+let sageAccId = process.env.sageAccId
+let sageLoginId = process.env.sageLoginId
+let sagePwd = process.env.sagePwd
 
 // var mongodb = require('mongodb');
 // var elasticsearch = require('elasticsearch');
@@ -25,9 +31,10 @@ const q = new Queue(cxnOptions, qOptions)
 let serviceUrl = 'http://localhost:3030';
 let pdmUrl = 'http://api.flowzcluster.tk/pdmnew/pdm'
 let asiUrl = 'https://sandbox-productservice.asicentral.com/api/v4/'
+let sageUrl = 'https://www.promoplace.com/ws/ws.dll/XMLDataStream'
 
 // let lookup = 'https://sandbox-productservice.asicentral.com/api/v4/lookup/categorieslist'
-let psyncUrl = serviceUrl + '/product-sync'
+let psyncUrl = serviceUrl + '/onlysync'
 
 let lookupData = {};
 
@@ -40,6 +47,10 @@ let lookup = {
 	'ShippingWeight': 'shippingweight'
 }
 
+let count = 0
+// let prod_count = 0
+let skip = 0
+
 async function getAPI(id) {
 	let res = await axios.get(psyncUrl + '/' + id).then(resp => {
 		return resp.data
@@ -49,13 +60,13 @@ async function getAPI(id) {
 	return res;
 }
 
-async function getPDMdata(id) {
-	let res = await axios.get(pdmUrl, {
+async function getPDMdata(id,skip) {
+	let res = await axios.get(pdmUrl + '/?$skip=' + skip , {
 		headers: {'vid': id}
 	}).then(resp => {
 		return resp.data
 	}).catch(err => {
-		console.log('Error ==> PDM GET :: ')
+		console.log('Error ==> PDM GET :: ',err)
 		return []
 	})
 	return res;
@@ -82,6 +93,22 @@ async function asiAuth() {
 	return resp
 }
 
+async function convertToJson(xml) {
+  var options = {
+   object: true,
+   reversible: true
+  };
+
+  var jsonData = parser.toJson(xml,options);
+  // jsonData = JSON.stringify(jsonData)
+  return jsonData
+}
+
+async function convertToXml(json) {
+  var xml = parser.toXml(json);
+  return xml
+}
+
 async function getASIProduct(xid, aToken) {
 	let url = asiUrl + 'product/' + xid
 	let resp = await axios.get(url, {
@@ -95,6 +122,30 @@ async function getASIProduct(xid, aToken) {
 			console.log('Error ==> ASI GET PRODUCT ::', err.response.data)
 		}
 		return {}
+	})
+	return resp	
+}
+
+async function getSageProduct(spc) {
+	let url = sageUrl
+	let reqObj = '<?xml version="1.0" encoding="UTF-8"?><XMLDataStreamRequest><Ver>3.2</Ver><Auth><AcctID>' + sageAccId + '</AcctID><LoginID>' + sageLoginId + '</LoginID><Password>' + sagePwd + '</Password></Auth><ProductDetail><SPC>' + spc + '</SPC></ProductDetail></XMLDataStreamRequest>'
+	let resp = await axios.post(url, reqObj, {headers: {'content-type': 'application/xml'}}).then(async res => {
+		let jsonRes = await convertToJson(res.data)
+		if(jsonRes.hasOwnProperty('XMLDataStreamResponse')){
+			let innerResponse = jsonRes['XMLDataStreamResponse']
+			if(innerResponse.hasOwnProperty('ErrMsg')){
+				let errObj = {XMLDataStreamResponse: { Ver: { '$t': '3.2' }, Auth: { AcctID : { '$t': sageAccId }, LoginID : { '$t' : sageLoginId }, Password : { '$t' : sagePwd }}, LegalNote: { '$t': 'USE SUBJECT TO TERMS OF YOUR AGREEMENT.  UNAUTHORIZED USE PROHIBITED.  SUPPLIER INFORMATION IS CONFIDENTIAL.  (C) 2018 QUICK TECHNOLOGIES INC.' },ProductDetail: {}}}
+				return errObj
+			}
+			else if(innerResponse.hasOwnProperty('ProductDetail')){
+				jsonRes['XMLDataStreamResponse']['Auth'] = { AcctID : { '$t': sageAccId }, LoginID : { '$t' : sageLoginId }, Password : { '$t' : sagePwd } }
+				return jsonRes
+			}
+		}
+		else {
+			console.log('no')
+		}
+	}).catch(err => {
 	})
 	return resp	
 }
@@ -116,6 +167,263 @@ async function postASIProduct(aToken, item) {
 	return resp	
 }
 
+async function postSageProduct(xmlProduct) {
+	let url = sageUrl
+	let resp = await axios.post(url, xmlProduct, {headers: {'content-type': 'application/xml'}}).then(async res => {
+		let jsonRes = await convertToJson(res.data)
+		return jsonRes
+	}).catch(err => {
+	})
+	return resp	
+}
+
+async function updateProductProcessed(syncId,prod_count) {
+	let response = await axios.patch(psyncUrl + '/' + syncId, {'no-product-process': prod_count}).then(res => {
+		return res
+	})
+	.catch(err => {
+		console.log('Update error....', err)
+	})
+	return response
+}
+
+function sageProductMap(sageProduct, pdmProduct){
+	console.log('&&&&&', sageProduct)
+	try {
+		let pdmProduct1 = _.cloneDeep(pdmProduct)
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SPC"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SPC"]["$t"] = pdmProduct1.sku
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ProductID"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ProductID"]["$t"] = parseInt(pdmProduct1.product_id)
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PrName"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PrName"]["$t"] = pdmProduct1.product_name.replace(/\u2122|\ufffd/gi, '')
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["LineName"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["LineName"]["$t"] = pdmProduct1.linename
+
+		let newDesc = pdmProduct1.description.replace(/\n|\"|&nbsp;|\u2122|\ufffd/g, ' ')
+
+		if(newDesc.length <= 500){
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Description"] = {"$t" : ''}
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Description"]["$t"] = newDesc	
+		}
+		else {
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Description"] = {"$t" : ''}
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Description"]["$t"] = newDesc.substring(0,499)
+		}
+
+		let newCategories = _.join(pdmProduct1.categories, ',');
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Category"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Category"]["$t"] = newCategories
+
+		let newKeywords = _.join(pdmProduct1.search_keyword, ',');
+
+		if(newKeywords.length <= 200){
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Keywords"] = {"$t" : ''}
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Keywords"]["$t"] = newKeywords	
+		}
+		else {
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Keywords"] = {"$t" : ''}
+			sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Keywords"]["$t"] = newKeywords.substring(0,199)
+		}
+
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["MadeInCountry"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["MadeInCountry"]["$t"] = pdmProduct1.country
+
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ExpDate"] = {"$t" : ''}
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ExpDate"]["$t"] = moment(pdmProduct1.valid_up_to).format("MM/DD/YY")
+
+		// mapping attribute colors
+		if(pdmProduct1.hasOwnProperty('attributes')){
+			if(pdmProduct1["attributes"].colors.length > 0){
+				let newColors = _.join(pdmProduct1["attributes"].colors, ',');
+				if(newColors.length <= 300){
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Colors"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Colors"]["$t"] = newColors	
+				}
+				else {
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Colors"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Colors"]["$t"] = newColors.substring(0,299)
+				}
+			}
+		}
+
+		// mapping imprint data fields
+		if(pdmProduct1.hasOwnProperty('imprint_data')){
+			// for(let i=0; i < pdmProduct1.imprint_data.length; i++){
+				if(pdmProduct1.imprint_data[0].imprint_area.length < 100){
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ImprintArea"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ImprintArea"]["$t"] = pdmProduct1.imprint_data[0].imprint_area
+				}
+
+		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Decoration Method"] = {"$t" : ''}
+		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Decoration Method"]["$t"] = pdmProduct1.imprint_data[0].imprint_method
+
+		        if(pdmProduct1.imprint_data[0].production_days !== '' && pdmProduct1.imprint_data[0].production_days !== undefined && pdmProduct1.imprint_data[0].production_unit !== '' && pdmProduct1.imprint_data[0].production_unit !== undefined){
+		        	
+		        	let prodTime =  pdmProduct1.imprint_data[0].production_days + pdmProduct1.imprint_data[0].production_unit
+		        	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ProdTime"] = {"$t" : ''}
+		            sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ProdTime"]["$t"] = prodTime
+
+		        }
+
+
+		        if(pdmProduct1.imprint_data[0].setup_charge !== '' && pdmProduct1.imprint_data[0].setup_charge !== undefined){
+		         let SetupChg = ''
+		         let SetupChgCode = ''
+		         let setupChgArr = pdmProduct1.imprint_data[0].setup_charge.split('(')
+		         SetupChg = setupChgArr[0]
+		         SetupChgCode = (setupChgArr[1].split(')'))[0]
+
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SetupChg"] = {"$t" : ''}
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SetupChg"]["$t"] = SetupChg
+
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SetupChgCode"] = {"$t" : ''}
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["SetupChgCode"]["$t"] = SetupChgCode
+		        }
+
+		        if(pdmProduct1.imprint_data[0].additional_color_charge !== '' && pdmProduct1.imprint_data[0].additional_color_charge !== undefined){
+		         let AddClrChg = ''
+		         let AddClrChgCode = ''
+		         let addClrChgArr = pdmProduct1.imprint_data[0].additional_color_charge.split('(')
+		         AddClrChg = addClrChgArr[0]
+		         AddClrChgCode = (addClrChgArr[1].split(')'))[0]
+
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["AddClrChg"] = {"$t" : ''}
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["AddClrChg"]["$t"] = AddClrChg
+
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["AddClrChgCode"] = {"$t" : ''}
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["AddClrChgCode"]["$t"] = AddClrChgCode
+		        }
+
+		        if(pdmProduct1.imprint_data[0].price_included !== '' && pdmProduct1.imprint_data[0].price_included !== undefined){
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PriceIncludes"] = {"$t" : ''}
+		         sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PriceIncludes"]["$t"] = pdmProduct1.imprint_data[0].imprint_position
+		        }
+
+			// }
+		}
+
+		//mapping shipping data fields
+		if(pdmProduct1.hasOwnProperty('shipping')){
+
+				if(pdmProduct1.shipping[0].carton_size_unit === 'inches'){
+
+					if(pdmProduct1.shipping[0].carton_length !== "" && pdmProduct1.shipping[0].carton_length !== undefined){
+					    sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonL"] = {"$t" : ''}
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonL"]["$t"] = parseInt(pdmProduct1.shipping[0].carton_length)	
+					}
+
+					if(pdmProduct1.shipping[0].carton_width !== "" && pdmProduct1.shipping[0].carton_width !== undefined){
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonW"] = {"$t" : ''}
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonW"]["$t"] = parseInt(pdmProduct1.shipping[0].carton_width)	
+					}
+
+					if(pdmProduct1.shipping[0].carton_height !== "" && pdmProduct1.shipping[0].carton_height !== undefined){
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonH"] = {"$t" : ''}
+				        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CartonH"]["$t"] = parseInt(pdmProduct1.shipping[0].carton_height)	
+					}
+
+				}
+
+				if(pdmProduct1.shipping[0].carton_weight_unit === 'LBS'){
+
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["WeightPerCarton"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["WeightPerCarton"]["$t"] = parseInt(pdmProduct1.shipping[0].carton_weight)
+
+				}
+				
+				if(pdmProduct1.shipping[0].shipping_qty_per_carton !== "" && pdmProduct1.shipping[0].shipping_qty_per_carton !== undefined){
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["UnitsPerCarton"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["UnitsPerCarton"]["$t"] = parseInt(pdmProduct1.shipping[0].shipping_qty_per_carton)
+				}
+
+		       if(pdmProduct1.shipping[0].fob_country_code.length <= 2){
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointCountry"] = {"$t" : ''}
+			        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointCountry"]["$t"] = pdmProduct1.shipping[0].fob_country_code
+		       }
+
+		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointZip"] = {"$t" : ''}
+		        sageProduct["XMLDataStreamResponse"]["ProductDetail"]["ShipPointZip"]["$t"] = parseInt(pdmProduct1.shipping[0].fob_zip_code)
+
+			// find packaging key in features list
+			if(pdmProduct1.hasOwnProperty('features')){
+				for(let item in pdmProduct1["features"]){
+					if(pdmProduct1["features"][item]["key"] === "Packaging"){
+						if(pdmProduct1["features"][item]["value"].length <= 50){
+							sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Package"] = {"$t" : ''}
+			                sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Package"]["$t"] = pdmProduct1["features"][item]["value"]	
+						}
+					}
+				}
+			}
+		}
+
+		//mapping pricing data fields
+		if(pdmProduct1.hasOwnProperty('pricing')){
+			for(let item in pdmProduct1['pricing']){
+				let price_code = ''
+				if(pdmProduct1['pricing'][item]['price_type'] === 'regular' && pdmProduct1['pricing'][item]['type'] === 'decorative' && pdmProduct1['pricing'][item]['global_price_type'] === 'global'){
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Currency"] = {"$t" : ''}
+	                sageProduct["XMLDataStreamResponse"]["ProductDetail"]["Currency"]["$t"] = pdmProduct1["pricing"][item]["currency"]
+
+					for(let price_item in pdmProduct1['pricing'][item]['price_range']){
+						let indx = parseInt(price_item) + 1
+						let qty = 'Qty' + indx
+						let price = 'Prc' + indx
+						price_code = price_code + pdmProduct1["pricing"][item]["price_range"][price_item]["code"]
+						sageProduct["XMLDataStreamResponse"]["ProductDetail"][qty] = {"$t" : ''}
+	                	sageProduct["XMLDataStreamResponse"]["ProductDetail"][qty]["$t"] = pdmProduct1["pricing"][item]["price_range"][price_item]["qty"]["gte"]
+
+	                	sageProduct["XMLDataStreamResponse"]["ProductDetail"][price] = {"$t" : ''}
+	                	sageProduct["XMLDataStreamResponse"]["ProductDetail"][price]["$t"] = pdmProduct1["pricing"][item]["price_range"][price_item]["price"]
+					}
+
+					sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PrCode"] = {"$t" : ''}
+                	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PrCode"]["$t"] = price_code
+				}
+
+				// if price_type is piece_wise_price map it with PiecesPerUnit
+				if(pdmProduct1['pricing'][item]['price_type'] === 'piece_wise_price' && pdmProduct1['pricing'][item]['type'] === 'decorative' && pdmProduct1['pricing'][item]['global_price_type'] === 'global'){
+					for(let price_item in pdmProduct1['pricing'][item]['price_range']){
+						let indx1 = parseInt(price_item) + 1
+						let qty1 = 'PiecesPerUnit' + indx1
+						sageProduct["XMLDataStreamResponse"]["ProductDetail"][qty1] = {"$t" : ''}
+	                	sageProduct["XMLDataStreamResponse"]["ProductDetail"][qty1]["$t"] = pdmProduct1["pricing"][item]["price_range"][price_item]["qty"]["gte"]
+					}
+				}
+			}
+		}
+
+		// mapping price_1 as base_price with Standard catalog price column 1
+		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CatPrc1"] = {"$t" : ''}
+    	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["CatPrc1"]["$t"] = pdmProduct1["price_1"]
+
+    	//mapping image link
+    	if(pdmProduct1.hasOwnProperty('images')){
+    		let secure_url1 = ''
+    		for(let item in pdmProduct1['images']){
+    			for(let imgItem in pdmProduct1['images'][item]['images']){
+    				if(pdmProduct1['images'][item]['images'][imgItem]['web_image'] === pdmProduct1['default_image']){
+    					secure_url1 = pdmProduct1['images'][item]['images'][imgItem]['secure_url']
+			    		sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PicLink"] = {"$t" : ''}
+				    	sageProduct["XMLDataStreamResponse"]["ProductDetail"]["PicLink"]["$t"] = secure_url1
+    				}
+    			}
+    		}   	 
+    	}
+
+		return sageProduct
+	}
+	catch (e) {
+		console.log('Error in SageProductMapping......', e)
+	}
+}
+
 function asiProductMap(asi_product, _pdmProduct) {
 	try {
 	// console.log('.........................................', lookupData)
@@ -123,7 +431,12 @@ function asiProductMap(asi_product, _pdmProduct) {
 
 	// ************ Required Fields
 	asi_product.ExternalProductId = pdmProduct.sku;
-	asi_product.Name = pdmProduct.product_name;
+
+	// remove superscripts and modifier letters 
+	if(pdmProduct.product_name != undefined){
+		let newProductName = pdmProduct.product_name.replace(/\u2122|\ufffd/gi, '')
+	    asi_product.Name = newProductName;
+	}
 	
 	if (pdmProduct.description != undefined) {
 		
@@ -131,6 +444,8 @@ function asiProductMap(asi_product, _pdmProduct) {
 		let value = pdmProduct.description.replace(/<[^>]+>/ig, '');
 		value = value.replace(/\n/g, ' ');
 		value = value.replace("\"", "");
+		value = value.replace(/&nbsp;/g, ' ');
+
 		
 		asi_product.Description = value
 	} else {
@@ -139,13 +454,16 @@ function asiProductMap(asi_product, _pdmProduct) {
 
 
 	if (pdmProduct.activeSummary != undefined) {
-		if (pdmProduct.activeSummary.length < 130) {
-			asi_product.Summary = pdmProduct.activeSummary;
+		let newActiveSummary = pdmProduct.activeSummary.replace(/\u2122|\ufffd/gi, '')
+
+		if (newActiveSummary.length < 130) {
+			asi_product.Summary = newActiveSummary;
 		} else {
-			asi_product.Summary = pdmProduct.activeSummary.substring(0, 129);
+			asi_product.Summary = newActiveSummary.substring(0, 129);
 		}
 	}  else {
-		asi_product.Summary = pdmProduct.product_name;
+		let ProductName = pdmProduct.product_name.replace(/\u2122|\ufffd/gi, '')
+		asi_product.Summary = ProductName;
 	}
 	
 
@@ -178,7 +496,21 @@ function asiProductMap(asi_product, _pdmProduct) {
 	// 	asi_product.LineNames = [pdmProduct.linename];
 	// }
 	if (pdmProduct.search_keyword != undefined && pdmProduct.search_keyword.length > 0) {
-		asi_product.ProductKeywords = pdmProduct.search_keyword
+		let keywordsArr = []
+
+		// check if each keyword should have length less than 30
+		for(let item in pdmProduct.search_keyword){
+			if(pdmProduct.search_keyword[item].length <= 30){	
+				keywordsArr.push(pdmProduct.search_keyword[item])
+			}
+		}
+		if(keywordsArr.length < 30){
+			asi_product.ProductKeywords = keywordsArr	
+		}
+		else if(keywordsArr.length > 30){
+			keywordsArr = _.slice(keywordsArr,0,30)
+			asi_product.ProductKeywords = keywordsArr	
+		}
 	}
 	
 	// asi_product.ProductDataSheet = '';
@@ -385,12 +717,16 @@ function asiProductMap(asi_product, _pdmProduct) {
 					}]
 				})
 				if (exist == undefined || exist.length == 0) {
-					ItemWeight.Values.push({
-						Value: [{
-							Value: item.product_weight,
-							Unit: unit
-						}]
-					})
+
+					// ItemWeight should be greater than 0.01
+					if(item.product_weight > 0.01){
+						ItemWeight.Values.push({
+							Value: [{
+								Value: item.product_weight,
+								Unit: unit
+							}]
+						})	
+					}
 				}
 			}
 
@@ -511,15 +847,17 @@ function asiProductMap(asi_product, _pdmProduct) {
 			if (item.global_price_type == 'global' && item.type == 'decorative' && item.price_type == 'regular') {
 				let _prices = []
 				for (let [inx, inneritem] of item.price_range.entries()) {
-					_prices.push({
-						Sequence: inx + 1,
-						Qty: inneritem.qty.gte,
-						ListPrice: inneritem.price,
-						DiscountCode: inneritem.code,
-						PriceUnit: {
-							ItemsPerUnit: 1
-						}
-					})
+					if(inneritem.code !== null && inneritem.code !== ''){
+						_prices.push({
+							Sequence: inx + 1,
+							Qty: inneritem.qty.gte,
+							ListPrice: inneritem.price,
+							DiscountCode: inneritem.code,
+							PriceUnit: {
+								ItemsPerUnit: 1
+							}
+						})	
+					}
 				}
 				PriceGrids.push({
 					IsBasePrice: true,
@@ -590,7 +928,7 @@ function asiProductMap(asi_product, _pdmProduct) {
 					fSeq++;
 				}
 			}
-		}
+		}	
 	}
 	// ******** Done PriceGrids
 
@@ -663,10 +1001,11 @@ function asiProductMap(asi_product, _pdmProduct) {
 	}
 }
 
-async function syncAsiFunction(vid) {
-	console.log('*******************  ASI SYNC STARTED  *******************')
-	let pdmData = await getPDMdata(vid)
-	// console.log('\n', pdmData)
+async function syncAsiFunction(vid,skip,syncId) {
+	console.log('*******************  ASI SYNC STARTED  *******************',skip)
+	let pdmData = await getPDMdata(vid,skip)
+	console.log('\n', pdmData)
+	let total_hits = pdmData.hits.total
 
 	let asiauth = await asiAuth()
 	if (Object.keys(asiauth).length > 0) {
@@ -689,6 +1028,7 @@ async function syncAsiFunction(vid) {
 				// check item exist in ASI or not
 				let xid = item._source.sku
 				let asi_product = await getASIProduct(xid, aToken)
+				count ++
 				if (Object.keys(asi_product).length > 0) {
 					// Product Found --> Update Product to ASI
 
@@ -700,6 +1040,8 @@ async function syncAsiFunction(vid) {
 
 						let update_product = await postASIProduct(aToken, map_product)
 						console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product, '\n UPDATE:: ', JSON.stringify(map_product) + '\n')
+
+						let updated_counted = await updateProductProcessed(syncId,count)
 						// console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Update', update_product)
 					// } 
 				} else {
@@ -711,28 +1053,74 @@ async function syncAsiFunction(vid) {
 					let update_product = await postASIProduct(aToken, map_product)
 					// console.log('+++++++++++++++++++++++++++++++++ New', update_product)
 					console.log('+++++++++++++++++++++++++++++++++', update_product, '\n DATA::', JSON.stringify(map_product) + '\n')
+
+					let updated_counted = await updateProductProcessed(syncId,count)
 				}
+
+				// count ++
+			}
+
+			if(count < total_hits){
+				skip = skip + 10
+				console.log('calling syncASi for next 10 records.............')
+				syncAsiFunction(vid,skip,syncId)
 			}
 		}
 	}
 	return 0;
 }
 
-async function syncSageFunction(vid) {
+async function syncSageFunction(vid,skip,syncId) {
 	console.log('*******************  SAGE SYNC STARTED  *******************')
+	let pdmData = await getPDMdata(vid,skip)
+	console.log('\n', pdmData)
+	let total_hits = pdmData.hits.total
+
+	if (pdmData.hasOwnProperty('hits')) {
+			for (let item of pdmData.hits.hits) {
+				// check item exist in Sage or not
+				let spc = item._source.sku
+				let sage_product = await getSageProduct(spc)
+				count ++
+				if (sage_product.hasOwnProperty('XMLDataStreamResponse')) {
+					
+						let mapProduct = await sageProductMap(sage_product, item._source)
+
+						let xmlProduct = await convertToXml(mapProduct)
+
+						console.log('xmlproduct ======>', xmlProduct)
+
+						let update_product = await postSageProduct(xmlProduct)
+						console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% update product %%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product)
+
+						let updated_counted = await updateProductProcessed(syncId,count)
+
+				// count ++
+			}
+
+		}
+			if(count < total_hits){
+				skip = skip + 10
+				console.log('calling syncSage for next 10 records.............',skip)
+				syncSageFunction(vid,skip,syncId)
+			}
+	}
+
 	return 0;
 }
 
 q.process(async(job, next) => {
 	try {
 		console.log('job.data --> Sync_id :: ', job.data.Sync_id, '  Vid :: ', job.data.userdetails.vid)
+		count = 0
+		skip = 0
 		let getAPIdata = await getAPI(job.data.Sync_id)
 		// console.log('getAPIdata :: ', getAPIdata)
 		if (Object.keys(getAPIdata).length > 0) {
 			if (getAPIdata.syncOn == 'ASI') {
-				syncAsiFunction(job.data.userdetails.vid)
+				syncAsiFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
 			} else if (getAPIdata.syncOn == 'SAGE') {
-				syncSageFunction(job.data.userdetails.vid)
+				syncSageFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
 			}
 		}
 		// console.log('-----------------------||  Done  ||------------------------')

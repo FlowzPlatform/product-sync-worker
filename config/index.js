@@ -2,7 +2,7 @@ module.exports = {
   "rethinkdb": {
     "host": process.env.RDB_HOST,
     "port": process.env.RDB_PORT,
-    "db": "product_service_api"
+    "db": "prosync"
   },
   "qOptions": {
     "name": "product_sync_worker",
