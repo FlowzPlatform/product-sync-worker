@@ -2,7 +2,7 @@ module.exports = {
   "rethinkdb": {
     "host": process.env.RDB_HOST,
     "port": process.env.RDB_PORT,
-    "db": "prosync"
+    "db": "FlowzDBETL"
   },
   "qOptions": {
     "name": "product_sync_worker",

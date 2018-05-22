@@ -15,7 +15,7 @@ let asi_pass = process.env.asi_password
 let sageAccId = process.env.sageAccId
 let sageLoginId = process.env.sageLoginId
 let sagePwd = process.env.sagePwd
-
+let uploaderService = process.env.uploaderService
 // var mongodb = require('mongodb');
 // var elasticsearch = require('elasticsearch');
 // var MongoClient = require('mongodb').MongoClient;
@@ -28,13 +28,15 @@ const qOptions = app.qOptions
 const q = new Queue(cxnOptions, qOptions)
 
 
-let serviceUrl = 'http://localhost:3030';
+// let uploaderServices = 'http://localhost:3040';
 let pdmUrl = 'http://api.flowzcluster.tk/pdmnew/pdm'
 let asiUrl = 'https://sandbox-productservice.asicentral.com/api/v4/'
 let sageUrl = 'https://www.promoplace.com/ws/ws.dll/XMLDataStream'
 
 // let lookup = 'https://sandbox-productservice.asicentral.com/api/v4/lookup/categorieslist'
-let psyncUrl = serviceUrl + '/onlysync'
+let psyncUrl = uploaderService + '/product-sync'
+
+const no_image_path = 'https://res.cloudinary.com/flowz/image/upload/v1526652106/builder/gxycflqvc1m23qqknch9.png'
 
 let lookupData = {};
 
@@ -56,7 +58,7 @@ async function getAPI(id) {
 		return resp.data
 	}).catch(err => {
 		return {}
-	})
+	})	
 	return res;
 }
 
@@ -547,29 +549,85 @@ function asiProductMap(asi_product, _pdmProduct) {
 
 
 	// ****************** Set Images
-	asi_product.Images.push({
-		// ImageURL: pdmProduct.default_image,
-		ImageURL: 'https://res.cloudinary.com/flowz/raw/upload/v1525085146/product_images/f9ea80ee-6329-48de-b247-a029e1cd841a/54694-blue_1.jpg',
-		Rank: 1,
-		IsPrimary: true,
-		Configurations: [
-			{
-				Criteria: 'Product Color',
-				Value: [
-					pdmProduct.default_color
-				]
+	// asi_product.Images.push({
+	// 	// ImageURL: pdmProduct.default_image,
+	// 	ImageURL: 'https://res.cloudinary.com/flowz/raw/upload/v1525085146/product_images/f9ea80ee-6329-48de-b247-a029e1cd841a/54694-blue_1.jpg',
+	// 	Rank: 1,
+	// 	IsPrimary: true,
+	// 	Configurations: [
+	// 		{
+	// 			Criteria: 'Product Color',
+	// 			Value: [
+	// 				pdmProduct.default_color
+	// 			]
+	// 		}
+	// 	]
+	// })
+	if (!pdmProduct.hasOwnProperty('images')) {
+		asi_product.Images.push({
+			ImageURL: no_image_path,
+			Rank: 1,
+			IsPrimary: true,
+			Configurations: [
+				{
+					Criteria: 'Product Color',
+					Value: [
+						pdmProduct.default_color
+					]
+				}
+			]
+		})	
+	} else {
+		let imagename = pdmProduct.default_image;
+		let checkArr = [];
+		for (let item of pdmProduct.images) {
+			for (let inneritem of item.images) {
+				let _a = imagename.match('/'+inneritem.web_image+'/g')
+				if (_a != null) {
+					checkArr.push(inneritem)
+				}
 			}
-		]
-	})
+		}
+		if (checkArr.length > 0) {
+			asi_product.Images.push({
+				ImageURL: checkArr[0].secure_url,
+				Rank: 1,
+				IsPrimary: true,
+				Configurations: [
+					{
+						Criteria: 'Product Color',
+						Value: [
+							pdmProduct.default_color
+						]
+					}
+				]
+			})
+		} else {
+			asi_product.Images.push({
+				ImageURL: no_image_path,
+				Rank: 1,
+				IsPrimary: true,
+				Configurations: [
+					{
+						Criteria: 'Product Color',
+						Value: [
+							pdmProduct.default_color
+						]
+					}
+				]
+			})
+		}
+	}
+
 	let rank = 2;
-	if (pdmProduct.hasOwnProperty('pdmProduct')) {
+	if (pdmProduct.hasOwnProperty('images')) {
 		for (let item of pdmProduct.images) {
 			if (item.hasOwnProperty('images')) {
 				for (let inneritem of item.images) {
 					let exist = _.findIndex(asi_product.Images, {ImageURL: inneritem.web_image});
 					if (exist == -1) {
 						asi_product.Images.push({
-							ImageURL: 'https://res.cloudinary.com/flowz/raw/upload/v1525085146/product_images/f9ea80ee-6329-48de-b247-a029e1cd841a/54694-blue_1.jpg',
+							ImageURL: inneritem.secure_url,
 							// ImageURL: inneritem.web_image,
 							Rank: rank,
 							IsPrimary: false,
@@ -1039,7 +1097,7 @@ async function syncAsiFunction(vid,skip,syncId) {
 						console.log('map_product >>>>>>>>>>>>>>>>>>> Update :: ',  map_product.SKU);
 
 						let update_product = await postASIProduct(aToken, map_product)
-						console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product, '\n UPDATE:: ', JSON.stringify(map_product) + '\n')
+						console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product + '\n')
 
 						let updated_counted = await updateProductProcessed(syncId,count)
 						// console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Update', update_product)
@@ -1052,7 +1110,7 @@ async function syncAsiFunction(vid,skip,syncId) {
 					console.log('map_product >>>>>>>>>>>>>>>>>>> New :: ', map_product.SKU)
 					let update_product = await postASIProduct(aToken, map_product)
 					// console.log('+++++++++++++++++++++++++++++++++ New', update_product)
-					console.log('+++++++++++++++++++++++++++++++++', update_product, '\n DATA::', JSON.stringify(map_product) + '\n')
+					console.log('+++++++++++++++++++++++++++++++++', update_product + '\n')
 
 					let updated_counted = await updateProductProcessed(syncId,count)
 				}
@@ -1090,12 +1148,12 @@ async function syncSageFunction(vid,skip,syncId) {
 
 						console.log('xmlproduct ======>', xmlProduct)
 
-						let update_product = await postSageProduct(xmlProduct)
-						console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% update product %%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product)
+						// let update_product = await postSageProduct(xmlProduct)
+						// console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% update product %%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product)
 
-						let updated_counted = await updateProductProcessed(syncId,count)
+						// let updated_counted = await updateProductProcessed(syncId,count)
 
-				// count ++
+				// // count ++
 			}
 
 		}
