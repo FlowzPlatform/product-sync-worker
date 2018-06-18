@@ -57,6 +57,7 @@ async function getAPI(id) {
 	let res = await axios.get(psyncUrl + '/' + id).then(resp => {
 		return resp.data
 	}).catch(err => {
+		console.log('GET SYNC DATA ERROR', err)
 		return {}
 	})	
 	return res;
@@ -157,14 +158,16 @@ async function postASIProduct(aToken, item) {
 	let resp = await axios.post(url, item, {
 		headers: { AuthToken: aToken }
 	}).then(res => {
+		console.log('Success', resp.data)
 		return res.data
 	}).catch(err => {
 		if (err.response == undefined) {
 			console.log('Error ==> ASI POST PRODUCT :: Network Error')
+			return {Errors: [{'Reason': 'Network Error'}]}
 		} else {
 			console.log('Error ==> ASI POST PRODUCT ::', err.response.data)
+			return err.response.data
 		}
-		return {}
 	})
 	return resp	
 }
@@ -188,6 +191,46 @@ async function updateProductProcessed(syncId,prod_count) {
 	})
 	return response
 }
+
+async function asiUpdateStatus(syncId, status) {
+	let mdata = {
+		asiStatus: 'inprogress'
+	}
+	if (status !== undefined) {
+		mdata.asiStatus = 'completed'
+	}
+	let response = await axios.patch(psyncUrl + '/' + syncId, mdata).then(res => {
+		return true
+	})
+	.catch(err => {
+		return false
+		console.log('Update error....', err)
+	})
+	return response
+}
+
+async function asiUpdateTotal(syncId, total) {
+	let response = await axios.patch(psyncUrl + '/' + syncId, {'total': total}).then(res => {
+		return true
+	})
+	.catch(err => {
+		return false
+		console.log('Update error....', err)
+	})
+	return response
+}
+
+async function asiUpdateErrors(syncId, errors) {
+	let response = await axios.patch(psyncUrl + '/' + syncId, {'asiError': errors}).then(res => {
+		return true
+	})
+	.catch(err => {
+		return false
+		console.log('Update error....', err)
+	})
+	return response
+}
+
 
 function sageProductMap(sageProduct, pdmProduct){
 	console.log('&&&&&', sageProduct)
@@ -1059,7 +1102,7 @@ function asiProductMap(asi_product, _pdmProduct) {
 	}
 }
 
-async function syncAsiFunction(vid,skip,syncId) {
+async function syncAsiFunction(vid,skip,syncId, asiError) {
 	console.log('*******************  ASI SYNC STARTED  *******************',skip)
 	let pdmData = await getPDMdata(vid,skip)
 	console.log('\n', pdmData)
@@ -1082,8 +1125,10 @@ async function syncAsiFunction(vid,skip,syncId) {
 		// console.log('??????????????????????', lookupData)
 		let a = 0;
 		if (pdmData.hasOwnProperty('hits')) {
+			let updateTotal = await asiUpdateTotal(syncId, total_hits)
 			for (let item of pdmData.hits.hits) {
 				// check item exist in ASI or not
+				// let asiError = []
 				let xid = item._source.sku
 				let asi_product = await getASIProduct(xid, aToken)
 				count ++
@@ -1097,7 +1142,15 @@ async function syncAsiFunction(vid,skip,syncId) {
 						console.log('map_product >>>>>>>>>>>>>>>>>>> Update :: ',  map_product.SKU);
 
 						let update_product = await postASIProduct(aToken, map_product)
-						console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product + '\n')
+						// console.log('Update %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product + '\n')
+						if (update_product == '') {
+							console.log(' :::::::::::::::::: Success :::::::::::::::::')
+						} else {
+							asiError.push({
+								sku: map_product.SKU,
+								error: update_product.Errors
+							})
+						}
 
 						let updated_counted = await updateProductProcessed(syncId,count)
 						// console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Update', update_product)
@@ -1110,7 +1163,15 @@ async function syncAsiFunction(vid,skip,syncId) {
 					console.log('map_product >>>>>>>>>>>>>>>>>>> New :: ', map_product.SKU)
 					let update_product = await postASIProduct(aToken, map_product)
 					// console.log('+++++++++++++++++++++++++++++++++ New', update_product)
-					console.log('+++++++++++++++++++++++++++++++++', update_product + '\n')
+					// console.log('New +++++++++++++++++++++++++++++++++', update_product + '\n')
+					if (update_product == '') {
+						console.log(' :::::::::::::::::: Success :::::::::::::::::')
+					} else {
+						asiError.push({
+							sku: map_product.SKU,
+							error: update_product.Errors
+						})
+					}
 
 					let updated_counted = await updateProductProcessed(syncId,count)
 				}
@@ -1121,11 +1182,12 @@ async function syncAsiFunction(vid,skip,syncId) {
 			if(count < total_hits){
 				skip = skip + 10
 				console.log('calling syncASi for next 10 records.............')
-				syncAsiFunction(vid,skip,syncId)
+				await syncAsiFunction(vid,skip,syncId, asiError)
 			}
 		}
 	}
-	return 0;
+	// console.log('Errors:::', asiError)
+	return {status: 'done', error: asiError};
 }
 
 async function syncSageFunction(vid,skip,syncId) {
@@ -1173,15 +1235,27 @@ q.process(async(job, next) => {
 		count = 0
 		skip = 0
 		let getAPIdata = await getAPI(job.data.Sync_id)
-		// console.log('getAPIdata :: ', getAPIdata)
+		console.log('getAPIdata :: ', getAPIdata)
+		let updateStatus = await asiUpdateStatus(job.data.Sync_id)
 		if (Object.keys(getAPIdata).length > 0) {
 			if (getAPIdata.syncOn == 'ASI') {
-				syncAsiFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
+				console.log('--------------------------- ASI ------------------------------')
+				let isDone = await syncAsiFunction(job.data.userdetails.vid,skip,job.data.Sync_id, [])
+				if (isDone.status == 'done') {
+					let updatefinalStatus = await asiUpdateErrors(job.data.Sync_id, isDone.error)
+					let finalStatus = await asiUpdateStatus(job.data.Sync_id, 'done')
+				}
+				console.log('---------------------------- ASI Done -----------------------------')
 			} else if (getAPIdata.syncOn == 'SAGE') {
-				syncSageFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
+				console.log('------------------- SAGE --------------------')
+				await syncSageFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
+			} else {
+				console.log('------------------- BOTH --------------------')
+				await syncAsiFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
+				await syncSageFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
 			}
 		}
-		// console.log('-----------------------||  Done  ||------------------------')
+		console.log('-----------------------||  Done  ||------------------------')
 		return next(null, 'success')
 	} catch (err) {
 		console.log('Error >>>>>>', err)
