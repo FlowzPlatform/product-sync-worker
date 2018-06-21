@@ -37,6 +37,7 @@ let sageUrl = 'https://www.promoplace.com/ws/ws.dll/XMLDataStream'
 // let lookup = 'https://sandbox-productservice.asicentral.com/api/v4/lookup/categorieslist'
 let psyncUrl = uploaderService + '/product-sync'
 let asconfiguration = uploaderService + '/asconfiguration'
+console.log('asconfiguration', asconfiguration)
 
 const no_image_path = 'https://res.cloudinary.com/flowz/image/upload/v1526652106/builder/gxycflqvc1m23qqknch9.png'
 
@@ -233,6 +234,7 @@ async function asiUpdateErrors(syncId, errors) {
 }
 
 async function getAsCongiguration(id) {
+	console.log('getAsCongiguration', asconfiguration)
 	let response = await axios.get(asconfiguration + '/' + id).then(res => {
 		console.log('asconfiguration', res.data)
 		return res.data
