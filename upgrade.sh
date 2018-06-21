@@ -13,12 +13,12 @@ then
     RANCHER_URL="$RANCHER_URL_MASTER";
     RDB_HOST="$RDB_HOST_MASTER";
     RDB_PORT="$RDB_PORT_MASTER";
-    asi="$asi_master",
-    asi_user="$asi_user_master",
-    asi_password="$asi_password_master",
-    sageAccId="$sageAccId_master",
-    sageLoginId="$sageLoginId_master",
-    sagePwd="$sagePwd_master",
+    asi="$asi_master";
+    asi_user="$asi_user_master";
+    asi_password="$asi_password_master";
+    sageAccId="$sageAccId_master";
+    sageLoginId="$sageLoginId_master";
+    sagePwd="$sagePwd_master";
     uploaderService="$uploaderService_master"
   }
 elif [ "$TRAVIS_BRANCH" = "develop" ]
@@ -36,12 +36,12 @@ then
       RANCHER_URL="$RANCHER_URL_DEVELOP";
       RDB_HOST="$RDB_HOST_DEVELOP";
       RDB_PORT="$RDB_PORT_DEVELOP";
-      asi="$asi_develop",
-      asi_user="$asi_user_develop",
-      asi_password="$asi_password_develop",
-      sageAccId="$sageAccId_develop",
-      sageLoginId="$sageLoginId_develop",
-      sagePwd="$sagePwd_develop",
+      asi="$asi_develop";
+      asi_user="$asi_user_develop";
+      asi_password="$asi_password_develop";
+      sageAccId="$sageAccId_develop";
+      sageLoginId="$sageLoginId_develop";
+      sagePwd="$sagePwd_develop";
       uploaderService="$uploaderService_develop"
   }
 elif [ "$TRAVIS_BRANCH" = "staging" ]
@@ -59,12 +59,12 @@ then
       RANCHER_URL="$RANCHER_URL_STAGING";
       RDB_HOST="$RDB_HOST_STAGING";
       RDB_PORT="$RDB_PORT_STAGING";
-      asi="$asi_staging",
-      asi_user="$asi_user_staging",
-      asi_password="$asi_password_staging",
-      sageAccId="$sageAccId_staging",
-      sageLoginId="$sageLoginId_staging",
-      sagePwd="$sagePwd_staging",
+      asi="$asi_staging";
+      asi_user="$asi_user_staging";
+      asi_password="$asi_password_staging";
+      sageAccId="$sageAccId_staging";
+      sageLoginId="$sageLoginId_staging";
+      sagePwd="$sagePwd_staging";
       uploaderService="$uploaderService_staging"
   }
 else
@@ -81,12 +81,12 @@ else
       RANCHER_URL="$RANCHER_URL_QA";
       RDB_HOST="$RDB_HOST_QA";
       RDB_PORT="$RDB_PORT_QA";
-      asi="$asi_qa",
-      asi_user="$asi_user_qa",
-      asi_password="$asi_password_qa",
-      sageAccId="$sageAccId_qa",
-      sageLoginId="$sageLoginId_qa",
-      sagePwd="$sagePwd_qa",
+      asi="$asi_qa";
+      asi_user="$asi_user_qa";
+      asi_password="$asi_password_qa";
+      sageAccId="$sageAccId_qa";
+      sageLoginId="$sageLoginId_qa";
+      sagePwd="$sagePwd_qa";
       uploaderService="$uploaderService_qa"
   }
 fi
