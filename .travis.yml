@@ -1,0 +1,64 @@
+sudo: required
+
+language: node
+
+services:
+  - docker
+
+branches:
+  only:
+  - master
+  - develop
+  - staging
+  - QA
+
+
+
+jobs:
+  include:
+    - stage: Product-Sync-Worker
+      script:
+      - 'if [ ${TRAVIS_BRANCH} = "master" ]; then
+            docker login -u="$DOCKER_USERNAME_FLOWZ" -p="$DOCKER_PASSWORD_FLOWZ";
+            docker build -t product-sync-worker:latest .;
+            docker images;
+            docker tag product-sync-worker:latest $DOCKER_USERNAME_FLOWZ/product-sync-worker:latest;
+            docker push $DOCKER_USERNAME_FLOWZ/product-sync-worker:latest;
+        elif [ ${TRAVIS_BRANCH} = "develop" ]; then
+            docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
+            docker build -t product-sync-worker:dev .;
+            docker images;
+            docker tag product-sync-worker:dev $DOCKER_USERNAME/product-sync-worker:dev;
+            docker push $DOCKER_USERNAME/product-sync-worker:dev;
+        elif [ ${TRAVIS_BRANCH} = "staging" ]; then
+            docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
+            docker build -t product-sync-worker:$TRAVIS_BRANCH-$TRAVIS_BUILD_NUMBER .;
+            docker tag product-sync-worker:$TRAVIS_BRANCH-$TRAVIS_BUILD_NUMBER $DOCKER_USERNAME/product-sync-worker:$TRAVIS_BRANCH-$TRAVIS_BUILD_NUMBER;
+            docker tag product-sync-worker:$TRAVIS_BRANCH-$TRAVIS_BUILD_NUMBER $DOCKER_USERNAME/product-sync-worker:staging;
+            docker images;
+            docker push $DOCKER_USERNAME/product-sync-worker:$TRAVIS_BRANCH-$TRAVIS_BUILD_NUMBER;
+            docker push $DOCKER_USERNAME/product-sync-worker:staging;
+        else
+            docker login -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
+            docker build -t product-sync-worker:qa .;
+            docker images;
+            docker tag product-sync-worker:qa $DOCKER_USERNAME/product-sync-worker:qa;
+            docker push $DOCKER_USERNAME/product-sync-worker:qa;
+        fi'
+    - stage: Upgrade Rancher Service
+      script:
+      - bash ./upgrade.sh
+    - stage: Finish Rancher Service
+      script:
+      - bash ./finish.sh
+
+notifications:
+  email:
+    recipients:
+      - arpitap@officebeacon.com
+      - kaushalm@officebrain.com
+      - anuj@officebrain.com
+      - naveeng@officebrain.com
+      - chirag@officebrain.com
+    on_success: always
+    on_failure: always
