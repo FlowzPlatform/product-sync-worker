@@ -31,10 +31,12 @@ const q = new Queue(cxnOptions, qOptions)
 // let uploaderServices = 'http://localhost:3040';
 let pdmUrl = 'http://api.flowzcluster.tk/pdmnew/pdm'
 let asiUrl = 'https://sandbox-productservice.asicentral.com/api/v4/'
+// let asiUrl = 'https://productservice.asicentral.com/api/v4/'
 let sageUrl = 'https://www.promoplace.com/ws/ws.dll/XMLDataStream'
 
 // let lookup = 'https://sandbox-productservice.asicentral.com/api/v4/lookup/categorieslist'
 let psyncUrl = uploaderService + '/product-sync'
+let asconfiguration = uploaderService + '/asconfiguration'
 
 const no_image_path = 'https://res.cloudinary.com/flowz/image/upload/v1526652106/builder/gxycflqvc1m23qqknch9.png'
 
@@ -75,15 +77,14 @@ async function getPDMdata(id,skip) {
 	return res;
 }
 
-async function asiAuth() {
+async function asiAuth(item) {
 	let url = asiUrl + 'Login'
 	let resp = await axios.post(url, {
-		asi: asi,
-		username: asi_user,
-		password: asi_pass
+		asi: item.number,
+		username: item.user,
+		password: item.password
 	}).then(res => {
-		// console.log('ASI RESP:::', res.data)
-		
+		console.log('ASI RESP:::', res.data)
 		return res.data
 	}).catch(err => {
 		if (err.response == undefined) {
@@ -227,6 +228,19 @@ async function asiUpdateErrors(syncId, errors) {
 	.catch(err => {
 		return false
 		console.log('Update error....', err)
+	})
+	return response
+}
+
+async function getAsCongiguration(id) {
+	let response = await axios.get(asconfiguration + '/' + id).then(res => {
+		console.log('asconfiguration', res.data)
+		return res.data
+	})
+	.catch(err => {
+		console.log('Error getAsCongiguration', err)
+		let e = new Error(err)
+		return e
 	})
 	return response
 }
@@ -1102,47 +1116,73 @@ function asiProductMap(asi_product, _pdmProduct) {
 	}
 }
 
-async function syncAsiFunction(vid,skip,syncId, asiError) {
+async function syncAsiFunction(skip,data, asiError) {
 	console.log('*******************  ASI SYNC STARTED  *******************',skip)
-	let pdmData = await getPDMdata(vid,skip)
+	let pdmData = await getPDMdata(data.vid,skip)
 	console.log('\n', pdmData)
 	let total_hits = pdmData.hits.total
+	let getCredintial = await getAsCongiguration(data.asiConfig).then(resp => {
+		return resp
+	}).catch(err => {
+		return {}
+	})
+	if (Object.keys(getCredintial).length > 0) {
+		let asiauth = await asiAuth(getCredintial)
+		if (Object.keys(asiauth).length > 0) {
+			// console.log('ASI AUTH RESP::: ', asiauth)
+			let aToken = asiauth.AccessToken
+			for (let k in lookup) {
+				lookupData[k] = await axios.get(asiUrl + 'lookup/' + lookup[k], {headers: {
+					AuthToken: aToken
+				}}).then(res => {
+					return res.data[k]
+				}).catch(err => {
+					console.log('Error ==> Look-up Data Set error. ::', k)
+					return []
+				})
+			}
+			// console.log('??????????????????????', lookupData)
+			let a = 0;
+			if (pdmData.hasOwnProperty('hits')) {
+				let updateTotal = await asiUpdateTotal(data.id, total_hits)
+				for (let item of pdmData.hits.hits) {
+					// check item exist in ASI or not
+					// let asiError = []
+					let xid = item._source.sku
+					let asi_product = await getASIProduct(xid, aToken)
+					count ++
+					if (Object.keys(asi_product).length > 0) {
+						// Product Found --> Update Product to ASI
 
-	let asiauth = await asiAuth()
-	if (Object.keys(asiauth).length > 0) {
-		// console.log('ASI AUTH RESP::: ', asiauth)
-		let aToken = asiauth.AccessToken
-		for (let k in lookup) {
-			lookupData[k] = await axios.get(asiUrl + 'lookup/' + lookup[k], {headers: {
-				AuthToken: aToken
-			}}).then(res => {
-				return res.data[k]
-			}).catch(err => {
-				console.log('Error ==> Look-up Data Set error. ::', k)
-				return []
-			})
-		}
-		// console.log('??????????????????????', lookupData)
-		let a = 0;
-		if (pdmData.hasOwnProperty('hits')) {
-			let updateTotal = await asiUpdateTotal(syncId, total_hits)
-			for (let item of pdmData.hits.hits) {
-				// check item exist in ASI or not
-				// let asiError = []
-				let xid = item._source.sku
-				let asi_product = await getASIProduct(xid, aToken)
-				count ++
-				if (Object.keys(asi_product).length > 0) {
-					// Product Found --> Update Product to ASI
+						// if (a < 1) {
+							let map_product = await asiProductMap(asi_product, item._source)
+							// a++;
+							// console.log('\nmap_product >>>>>>>>>>>>>>>>>>> Update \n')
+							console.log('map_product >>>>>>>>>>>>>>>>>>> Update :: ',  map_product.SKU);
 
-					// if (a < 1) {
-						let map_product = await asiProductMap(asi_product, item._source)
-						// a++;
-						// console.log('\nmap_product >>>>>>>>>>>>>>>>>>> Update \n')
-						console.log('map_product >>>>>>>>>>>>>>>>>>> Update :: ',  map_product.SKU);
+							let update_product = await postASIProduct(aToken, map_product)
+							// console.log('Update %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product + '\n')
+							if (update_product == '') {
+								console.log(' :::::::::::::::::: Success :::::::::::::::::')
+							} else {
+								asiError.push({
+									sku: map_product.SKU,
+									error: update_product.Errors
+								})
+							}
 
+							let updated_counted = await updateProductProcessed(data.id,count)
+							// console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Update', update_product)
+						// } 
+					} else {
+						// Product Not Found --> Post New Product to ASI
+
+						let map_product = await asiProductMap({}, item._source)
+						// console.log('\nmap_product >>>>>>>>>>>>>>>>>>> New \n')
+						console.log('map_product >>>>>>>>>>>>>>>>>>> New :: ', map_product.SKU)
 						let update_product = await postASIProduct(aToken, map_product)
-						// console.log('Update %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%', update_product + '\n')
+						// console.log('+++++++++++++++++++++++++++++++++ New', update_product)
+						// console.log('New +++++++++++++++++++++++++++++++++', update_product + '\n')
 						if (update_product == '') {
 							console.log(' :::::::::::::::::: Success :::::::::::::::::')
 						} else {
@@ -1152,37 +1192,17 @@ async function syncAsiFunction(vid,skip,syncId, asiError) {
 							})
 						}
 
-						let updated_counted = await updateProductProcessed(syncId,count)
-						// console.log('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Update', update_product)
-					// } 
-				} else {
-					// Product Not Found --> Post New Product to ASI
-
-					let map_product = await asiProductMap({}, item._source)
-					// console.log('\nmap_product >>>>>>>>>>>>>>>>>>> New \n')
-					console.log('map_product >>>>>>>>>>>>>>>>>>> New :: ', map_product.SKU)
-					let update_product = await postASIProduct(aToken, map_product)
-					// console.log('+++++++++++++++++++++++++++++++++ New', update_product)
-					// console.log('New +++++++++++++++++++++++++++++++++', update_product + '\n')
-					if (update_product == '') {
-						console.log(' :::::::::::::::::: Success :::::::::::::::::')
-					} else {
-						asiError.push({
-							sku: map_product.SKU,
-							error: update_product.Errors
-						})
+						let updated_counted = await updateProductProcessed(data.id,count)
 					}
 
-					let updated_counted = await updateProductProcessed(syncId,count)
+					// count ++
 				}
 
-				// count ++
-			}
-
-			if(count < total_hits){
-				skip = skip + 10
-				console.log('calling syncASi for next 10 records.............')
-				await syncAsiFunction(vid,skip,syncId, asiError)
+				if(count < total_hits){
+					skip = skip + 10
+					console.log('calling syncASi for next 10 records.............')
+					await syncAsiFunction(skip, data, asiError)
+				}
 			}
 		}
 	}
@@ -1231,31 +1251,34 @@ async function syncSageFunction(vid,skip,syncId) {
 
 q.process(async(job, next) => {
 	try {
-		console.log('job.data --> Sync_id :: ', job.data.Sync_id, '  Vid :: ', job.data.userdetails.vid)
+		if (job.data.id != undefined) {
+		console.log('job.data --> Sync_id :: ', job.data.id, '  Vid :: ', job.data.vid)
 		count = 0
 		skip = 0
-		let getAPIdata = await getAPI(job.data.Sync_id)
-		console.log('getAPIdata :: ', getAPIdata)
-		let updateStatus = await asiUpdateStatus(job.data.Sync_id)
-		if (Object.keys(getAPIdata).length > 0) {
-			if (getAPIdata.syncOn == 'ASI') {
-				console.log('--------------------------- ASI ------------------------------')
-				let isDone = await syncAsiFunction(job.data.userdetails.vid,skip,job.data.Sync_id, [])
-				if (isDone.status == 'done') {
-					let updatefinalStatus = await asiUpdateErrors(job.data.Sync_id, isDone.error)
-					let finalStatus = await asiUpdateStatus(job.data.Sync_id, 'done')
+		// let getAPIdata = await getAPI(job.data.id)
+		// let getAPIdata = job.data
+			console.log('job.data :: ', job.data)
+			let updateStatus = await asiUpdateStatus(job.data.id)
+			if (Object.keys(job.data).length > 0) {
+				if (job.data.syncOn == 'ASI') {
+					console.log('--------------------------- ASI ------------------------------')
+					let isDone = await syncAsiFunction(skip,job.data, [])
+					if (isDone.status == 'done') {
+						let updatefinalStatus = await asiUpdateErrors(job.data.id, isDone.error)
+						let finalStatus = await asiUpdateStatus(job.data.id, 'done')
+					}
+					console.log('---------------------------- ASI Done -----------------------------')
+				} else if (job.data.syncOn == 'SAGE') {
+					console.log('------------------- SAGE --------------------')
+					await syncSageFunction(job.data.vid,skip,job.data.id)
+				} else {
+					console.log('------------------- BOTH --------------------')
+					await syncAsiFunction(skip,job.data, [])
+					await syncSageFunction(job.data.vid,skip,job.data.id)
 				}
-				console.log('---------------------------- ASI Done -----------------------------')
-			} else if (getAPIdata.syncOn == 'SAGE') {
-				console.log('------------------- SAGE --------------------')
-				await syncSageFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
-			} else {
-				console.log('------------------- BOTH --------------------')
-				await syncAsiFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
-				await syncSageFunction(job.data.userdetails.vid,skip,job.data.Sync_id)
 			}
-		}
 		console.log('-----------------------||  Done  ||------------------------')
+		}
 		return next(null, 'success')
 	} catch (err) {
 		console.log('Error >>>>>>', err)
