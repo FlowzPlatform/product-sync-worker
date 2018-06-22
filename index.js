@@ -15,7 +15,8 @@ let asi_pass = process.env.asi_password
 let sageAccId = process.env.sageAccId
 let sageLoginId = process.env.sageLoginId
 let sagePwd = process.env.sagePwd
-let uploaderService = process.env.uploaderService
+// let uploaderService = process.env.uploaderService
+let domainKey = process.env.domainKey
 // var mongodb = require('mongodb');
 // var elasticsearch = require('elasticsearch');
 // var MongoClient = require('mongodb').MongoClient;
@@ -29,14 +30,15 @@ const q = new Queue(cxnOptions, qOptions)
 
 
 // let uploaderServices = 'http://localhost:3040';
-let pdmUrl = 'http://api.flowzcluster.tk/pdmnew/pdm'
+let pdmUrl = 'http://api.'+ domainKey +'/pdmnew/pdm'
 let asiUrl = 'https://sandbox-productservice.asicentral.com/api/v4/'
 // let asiUrl = 'https://productservice.asicentral.com/api/v4/'
 let sageUrl = 'https://www.promoplace.com/ws/ws.dll/XMLDataStream'
 
 // let lookup = 'https://sandbox-productservice.asicentral.com/api/v4/lookup/categorieslist'
-let psyncUrl = uploaderService + '/product-sync'
-let asconfiguration = uploaderService + '/asconfiguration'
+let psyncUrl = 'https://api.'+ domainKey + '/uploader/product-sync'
+let asconfiguration = 'https://api.'+ domainKey + '/uploader/asconfiguration'
+// let asconfigurations = uploaderService + '/asconfiguration'
 console.log('asconfiguration', asconfiguration)
 
 const no_image_path = 'https://res.cloudinary.com/flowz/image/upload/v1526652106/builder/gxycflqvc1m23qqknch9.png'
